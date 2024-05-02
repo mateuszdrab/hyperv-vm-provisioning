@@ -13,7 +13,7 @@ param(
 
 if ($Force -or $PSCmdlet.ShouldContinue("Are you sure you want to delete VM?", "Data purge warning")) {
     if ($VMNames.Count -gt 0) {
-        Write-Host "Stop and delete VM's and its data files..." -NoNewline
+        Write-Host "Stop and delete VM's and its data files..."
 
         $VMNames | ForEach-Object {
 
@@ -67,8 +67,5 @@ if ($Force -or $PSCmdlet.ShouldContinue("Are you sure you want to delete VM?", "
             }
 
         }
-
-        Write-Host -ForegroundColor Green " Done."
-
     }
 }

@@ -71,17 +71,20 @@ param(
   [string] $TimeZone = "UTC", # UTC or continental zones of IANA DB like: Europe/Berlin
   [string] $CloudInitPowerState = "reboot", # poweroff, halt, or reboot , https://cloudinit.readthedocs.io/en/latest/reference/modules.html#power-state-change
   [string] $CustomUserDataYamlFile,
-  [string] $GuestAdminUsername = "admin",
-  [string] $GuestAdminPassword = "Passw0rd",
+  [string] $GuestAdminUsername = "",
+  [string] $GuestAdminPassword = "",
   [string] $GuestAdminSshPubKey,
-  [string] $ImageVersion = "20.04", # $ImageName ="focal" # 20.04 LTS , $ImageName="bionic" # 18.04 LTS
+  [string[]] $RootSshPubKeys,
+  [string] $ImageVersion = "ubuntu", # $ImageName ="focal" # 20.04 LTS , $ImageName="bionic" # 18.04 LTS
   [string] $ImageRelease = "release", # default option is get latest but could be fixed to some specific version for example "release-20210413"
   [string] $ImageBaseUrl = "http://cloud-images.ubuntu.com/releases", # alternative https://mirror.scaleuptech.com/ubuntu-cloud-images/releases
   [bool] $BaseImageCheckForUpdate = $true, # check for newer image at Distro cloud-images site
   [bool] $BaseImageCleanup = $true, # delete old vhd image. Set to false if using (TODO) differencing VHD
   [switch] $ShowSerialConsoleWindow = $false,
   [switch] $ShowVmConnectWindow = $false,
-  [switch] $Force = $false
+  [switch] $Force = $false,
+  [uint64[]] $ExtraVHDsSizeBytes = @(),
+  [string[]] $ExtraVHDsMounts = @()   
 )
 
 [System.Threading.Thread]::CurrentThread.CurrentUICulture = "en-US"
@@ -134,7 +137,7 @@ $FQDN = $VMHostname.ToLower() + "." + $DomainName.ToLower()
 # Instead of GUID, use 26 digit machine id suitable for BIOS serial number
 # src: https://stackoverflow.com/a/67077483/1155121
 # $vmMachineId = [Guid]::NewGuid().ToString()
-$VmMachineId = "{0:####-####-####-####}-{1:####-####-##}" -f (Get-Random -Minimum 1000000000000000 -Maximum 9999999999999999),(Get-Random -Minimum 1000000000 -Maximum 9999999999)
+$VmMachineId = "{0:####-####-####-####}-{1:####-####-##}" -f (Get-Random -Minimum 1000000000000000 -Maximum 9999999999999999), (Get-Random -Minimum 1000000000 -Maximum 9999999999)
 $tempPath = [System.IO.Path]::GetTempPath() + $vmMachineId
 mkdir -Path $tempPath | out-null
 Write-Verbose "Using temp path: $tempPath"
@@ -156,6 +159,10 @@ $bsdtarPath = Join-Path $PSScriptRoot "tools\bsdtar.exe"
 # https://docs.microsoft.com/en-us/troubleshoot/azure/virtual-machines/cloud-init-deployment-delay
 # and also somehow causing at sshd restart in password setting task to stuck for 30 minutes.
 Switch ($ImageVersion) {
+  "ubuntu" {
+    $_ = "noble"
+    $ImageVersion = "24.04"
+  }
   "18.04" {
     $_ = "bionic"
     $ImageVersion = "18.04"
@@ -198,6 +205,23 @@ Switch ($ImageVersion) {
     $ImageOS = "ubuntu"
     $ImageVersionName = "jammy"
     $ImageVersion = "22.04"
+    $ImageRelease = "release" # default option is get latest but could be fixed to some specific version for example "release-20210413"
+    $ImageBaseUrl = "http://cloud-images.ubuntu.com/releases" # alternative https://mirror.scaleuptech.com/ubuntu-cloud-images/releases
+    $ImageUrlRoot = "$ImageBaseUrl/$ImageVersionName/$ImageRelease/" # latest
+    $ImageFileName = "$ImageOS-$ImageVersion-server-cloudimg-amd64"
+    $ImageFileExtension = "img"
+    # Manifest file is used for version check based on last modified HTTP header
+    $ImageHashFileName = "SHA256SUMS"
+    $ImageManifestSuffix = "manifest"
+  }
+  "24.04" {
+    $_ = "noble"
+    $ImageVersion = "24.04"
+  }
+  "noble" {
+    $ImageOS = "ubuntu"
+    $ImageVersionName = "noble"
+    $ImageVersion = "24.04"
     $ImageRelease = "release" # default option is get latest but could be fixed to some specific version for example "release-20210413"
     $ImageBaseUrl = "http://cloud-images.ubuntu.com/releases" # alternative https://mirror.scaleuptech.com/ubuntu-cloud-images/releases
     $ImageUrlRoot = "$ImageBaseUrl/$ImageVersionName/$ImageRelease/" # latest
@@ -298,7 +322,7 @@ Switch ($ImageVersion) {
     $ImageHashFileName = "SHA512SUMS"
     $ImageManifestSuffix = "json"
   }
-  default {throw "Image version $ImageVersion not supported."}
+  default { throw "Image version $ImageVersion not supported." }
 }
 
 $ImagePath = "$($ImageUrlRoot)$($ImageFileName)"
@@ -326,7 +350,7 @@ if ([string]::IsNullOrEmpty($VMMachinePath)) {
   }
   Write-Verbose "VMMachinePath set: $VMMachinePath"
 }
-if (!(test-path $VMMachinePath)) {New-Item -ItemType Directory -Path $VMMachinePath | out-null}
+if (!(test-path $VMMachinePath)) { New-Item -ItemType Directory -Path $VMMachinePath | out-null }
 
 # Get default Virtual Hard Disk path (requires administrative privileges)
 if ([string]::IsNullOrEmpty($VMStoragePath)) {
@@ -338,7 +362,7 @@ if ([string]::IsNullOrEmpty($VMStoragePath)) {
   }
   Write-Verbose "VMStoragePath set: $VMStoragePath"
 }
-if (!(test-path $VMStoragePath)) {New-Item -ItemType Directory -Path $VMStoragePath | out-null}
+if (!(test-path $VMStoragePath)) { New-Item -ItemType Directory -Path $VMStoragePath | out-null }
 
 # Delete the VM if it is around
 $vm = Get-VM -VMName $VMName -ErrorAction 'SilentlyContinue'
@@ -375,7 +399,8 @@ if ($NetAutoconfig -eq $false) {
   if ([string]::IsNullOrEmpty($NetConfigType)) {
     $NetConfigType = "v2"
     Write-Verbose "Using default manual network configuration '$NetConfigType'."
-  } else {
+  }
+  else {
     Write-Verbose "NetworkConfigType: '$NetConfigType' assigned."
   }
 }
@@ -410,7 +435,8 @@ config:
     address: ['$($NameServers.Split(",") -join "', '" )']
     search:  ['$($DomainName)']
 "@
-} elseif ($NetConfigType -ieq "v2") {
+  }
+  elseif ($NetConfigType -ieq "v2") {
     Write-Verbose "v2 requested ..."
     $networkconfig = @"
 version: 2
@@ -428,7 +454,8 @@ ethernets:
       addresses: ['$($NameServers.Split(",") -join "', '" )']
       search: ['$($DomainName)']
 "@
-  } elseif ($NetConfigType -ieq "ENI") {
+  }
+  elseif ($NetConfigType -ieq "ENI") {
     Write-Verbose "ENI requested ..."
     $networkconfig = @"
 # inline-ENI network configuration
@@ -444,7 +471,8 @@ $(if (($null -ne $VMStaticMacAddress) -and ($VMStaticMacAddress -ne "")) { "  hw
   dns-nameservers $($NameServers.Split(",") -join " ")
   dns-search $DomainName
 "@
-  } elseif ($NetConfigType -ieq "ENI-file") {
+  }
+  elseif ($NetConfigType -ieq "ENI-file") {
     Write-Verbose "ENI-file requested ..."
     # direct network configuration setup
     $network_write_files = @"
@@ -474,7 +502,8 @@ $(if (($null -ne $NetAddress) -and ($NetAddress -ne "")) { "          address $N
           dns-search $DomainName
     path: /etc/network/interfaces.d/$($NetInterface)
 "@
-  } elseif ($NetConfigType -ieq "dhclient") {
+  }
+  elseif ($NetConfigType -ieq "dhclient") {
     Write-Verbose "dhclient requested ..."
     $network_write_files = @"
   # Static IP address
@@ -499,7 +528,8 @@ $(if (($null -ne $NetAddress) -and ($NetAddress -ne "")) { "          address $N
 
     path: /etc/dhcp/dhclient.conf
 "@
-  } else {
+  }
+  else {
     Write-Warning "No network configuration version type defined for static IP address setup."
   }
 }
@@ -571,25 +601,50 @@ $(if (-not [string]::IsNullOrEmpty($KeyboardOptions)) {"  options: $KeyboardOpti
 # https://learn.microsoft.com/en-us/azure/virtual-machines/linux/cloudinit-add-user#add-a-user-to-a-vm-with-cloud-init
 
 users:
-  - default
-  - name: $($GuestAdminUsername)
+  # - default
+$(if (-not [string]::IsNullOrEmpty($GuestAdminUsername)) {
+"  - name: $($GuestAdminUsername)
     no_user_group: true
     groups: [sudo]
     shell: /bin/bash
+    shell: /bin/bash
     sudo: ALL=(ALL) NOPASSWD:ALL
-    lock_passwd: false
+$(if (-not [string]::IsNullOrEmpty($GuestAdminPassword)) {
+"   lock_passwd: false
     plain_text_passwd: $($GuestAdminPassword)
-    lock_passwd: false
+"} else {
+"   lock_passwd: true
+"})
 $(if (-not [string]::IsNullOrEmpty($GuestAdminSshPubKey)) {
 "    ssh_authorized_keys:
     - $GuestAdminSshPubKey
 "})
+"})
 
+ssh_pwauth: $(if (-not [string]::IsNullOrEmpty($GuestAdminPassword)) {"true"} else {"false"})
+
+$(if ($RootSshPubKeys) {
+"
+disable_root: false    # true: notify default user account / false: allow root ssh login
+ssh_authorized_keys:
+
+$(foreach ($rootSshPubKey in $RootSshPubKeys) {
+"  
+  - $rootSshPubKey
+"
+})
+"} else {
+"
 disable_root: true    # true: notify default user account / false: allow root ssh login
-ssh_pwauth: true      # true: allow login with password; else only with setup pubkey(s)
+"})
 
-#ssh_authorized_keys:
-#  - ssh-rsa AAAAB... comment
+bootcmd:
+  - |
+    echo "network: {config: disabled}" > /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
+#  - systemctl stop systemd-networkd
+  - rm /etc/netplan/*.yaml
+  - echo "bmV0d29yazoNCiAgdmVyc2lvbjogMg0KICBldGhlcm5ldHM6DQogICAgbmljczoNCiAgICAgIG1hdGNoOg0KICAgICAgICBuYW1lOiBldGgqDQogICAgICBkaGNwNDogeWVzDQogICAgICBjcml0aWNhbDogdHJ1ZQ0KICAgICAgZGhjcC1pZGVudGlmaWVyOiBtYWM="    | base64 -d > /etc/netplan/01-static.yaml
+#  - systemctl start systemd-networkd
 
 # bootcmd can be setup like runcmd but would run at very early stage
 # on every cloud-init assisted boot if not prepended by command "cloud-init-per once|instance|always":
@@ -692,6 +747,47 @@ power_state:
   mode: $($CloudInitPowerState)
   message: Provisioning finished, will $($CloudInitPowerState) ...
   timeout: 15
+
+# add extra VHDs
+$(if ($ExtraVHDsMounts) {
+
+"
+disk_setup:"
+  $extraVhdIndex = 0
+  foreach ($extraVhdMount in $ExtraVHDsMounts) {
+     $extraVhdIndex++
+     $extraVhdDeviceLetter = [char]($extraVhdIndex + 97)
+"
+  /dev/sd$($extraVhdDeviceLetter):
+    table_type: gpt
+    layout: true
+"
+  }
+
+"
+fs_setup:"
+  $extraVhdIndex = 0
+  foreach ($extraVhdMount in $ExtraVHDsMounts) {
+     $extraVhdIndex++
+     $extraVhdDeviceLetter = [char]($extraVhdIndex + 97)
+"
+  - label: $extraVhdMount
+    filesystem: ext4
+    device: /dev/sd$($extraVhdDeviceLetter)1
+"
+  }
+
+"
+mounts:"
+  $extraVhdIndex = 0
+  foreach ($extraVhdMount in $ExtraVHDsMounts) {
+     $extraVhdIndex++
+     $extraVhdDeviceLetter = [char]($extraVhdIndex + 97)
+"
+  - [`"/dev/sd$($extraVhdDeviceLetter)1`", `"/mnt/$extraVhdMount`", `"ext4`", `"defaults`", `"0`", `"2`"]
+"
+  }
+})
 "@
 
 Write-Verbose "Userdata:"
@@ -794,24 +890,23 @@ if ($ImageTypeAzure) {
 
 # Create meta data ISO image, src: https://cloudinit.readthedocs.io/en/latest/topics/datasources/nocloud.html
 # both azure and nocloud support same cdrom filesystem https://github.com/canonical/cloud-init/blob/606a0a7c278d8c93170f0b5fb1ce149be3349435/cloudinit/sources/DataSourceAzure.py#L1972
-Write-Host "Creating metadata iso for VM provisioning - " -NoNewline
+Write-Host "Creating metadata iso for VM provisioning"
 $metaDataIso = "$($VMStoragePath)\$($VMName)-metadata.iso"
 Write-Verbose "Filename: $metaDataIso"
 cleanupFile $metaDataIso
 
 Start-Process `
   -FilePath $oscdimgPath `
-  -ArgumentList  "`"$($tempPath)\Bits`"","`"$metaDataIso`"","-lCIDATA","-d","-n" `
+  -ArgumentList  "`"$($tempPath)\Bits`"", "`"$metaDataIso`"", "-lCIDATA", "-d", "-n" `
   -Wait -NoNewWindow `
   -RedirectStandardOutput "$($tempPath)\oscdimg.log"
 
-if (!(test-path "$metaDataIso")) {throw "Error creating metadata iso"}
+if (!(test-path "$metaDataIso")) { throw "Error creating metadata iso" }
 Write-Verbose "Metadata iso written"
-Write-Host -ForegroundColor Green " Done."
 
 # storage location for base images
 $ImageCachePath = Join-Path $PSScriptRoot $("cache\CloudImage-$ImageOS-$ImageVersion")
-if (!(test-path $ImageCachePath)) {mkdir -Path $ImageCachePath | out-null}
+if (!(test-path $ImageCachePath)) { mkdir -Path $ImageCachePath | out-null }
 
 # Get the timestamp of the target build on the cloud-images site
 $BaseImageStampFile = join-path $ImageCachePath "baseimagetimestamp.txt"
@@ -831,17 +926,15 @@ if (!(test-path "$($ImageCachePath)\$($ImageOS)-$($stamp).$($ImageFileExtension)
   try {
     # If we do not have a matching image - delete the old ones and download the new one
     Write-Verbose "Did not find: $($ImageCachePath)\$($ImageOS)-$($stamp).$($ImageFileExtension)"
-    Write-Host 'Removing old images from cache...' -NoNewline
-    Remove-Item "$($ImageCachePath)" -Exclude 'baseimagetimestamp.txt',"$($ImageOS)-$($stamp).*" -Recurse -Force
-    Write-Host -ForegroundColor Green " Done."
-
+    Write-Host 'Removing old images from cache...'
+    Remove-Item "$($ImageCachePath)" -Exclude 'baseimagetimestamp.txt', "$($ImageOS)-$($stamp).*" -Recurse -Force
+    
     # get headers for content length
-    Write-Host 'Check new image size ...' -NoNewline
+    Write-Host 'Check new image size ...'
     $response = Invoke-WebRequest "$($ImagePath).$($ImageFileExtension)" -UseBasicParsing -Method Head
     $downloadSize = [int]$response.Headers["Content-Length"]
-    Write-Host -ForegroundColor Green " Done."
-
-    Write-Host "Downloading new Cloud image ($([int]($downloadSize / 1024 / 1024)) MB)..." -NoNewline
+    
+    Write-Host "Downloading new Cloud image ($([int]($downloadSize / 1024 / 1024)) MB)..."
     Write-Verbose $(Get-Date)
     $ProgressPreference = "SilentlyContinue" #Disable progress indicator because it is causing Invoke-WebRequest to be very slow
     # download new image
@@ -851,10 +944,9 @@ if (!(test-path "$($ImageCachePath)\$($ImageOS)-$($stamp).$($ImageFileExtension)
     Remove-Item "$($ImageCachePath)\$($ImageOS)-$($stamp).$($ImageFileExtension)" -Force -ErrorAction 'SilentlyContinue'
     Rename-Item -path "$($ImageCachePath)\$($ImageOS)-$($stamp).$($ImageFileExtension).tmp" `
       -newname "$($ImageOS)-$($stamp).$($ImageFileExtension)"
-    Write-Host -ForegroundColor Green " Done."
-
+    
     # check file hash
-    Write-Host "Checking file hash for downloaded image..." -NoNewline
+    Write-Host "Checking file hash for downloaded image..."
     Write-Verbose $(Get-Date)
     $hashSums = [System.Text.Encoding]::UTF8.GetString((Invoke-WebRequest $ImageHashPath -UseBasicParsing).Content)
     Switch -Wildcard ($ImageHashPath) {
@@ -864,12 +956,11 @@ if (!(test-path "$($ImageCachePath)\$($ImageOS)-$($stamp).$($ImageFileExtension)
       '*SHA512*' {
         $fileHash = Get-FileHash "$($ImageCachePath)\$($ImageOS)-$($stamp).$($ImageFileExtension)" -Algorithm SHA512
       }
-      default {throw "$ImageHashPath not supported."}
+      default { throw "$ImageHashPath not supported." }
     }
-    if (($hashSums | Select-String -pattern $fileHash.Hash -SimpleMatch).Count -eq 0) {throw "File hash check failed"}
+    if (($hashSums | Select-String -pattern $fileHash.Hash -SimpleMatch).Count -eq 0) { throw "File hash check failed" }
     Write-Verbose $(Get-Date)
-    Write-Host -ForegroundColor Green " Done."
-
+    
   }
   catch {
     cleanupFile "$($ImageCachePath)\$($ImageOS)-$($stamp).$($ImageFileExtension)"
@@ -879,130 +970,143 @@ if (!(test-path "$($ImageCachePath)\$($ImageOS)-$($stamp).$($ImageFileExtension)
   }
 }
 
+# File path for to-be provisioned VHD
+$VMDiskType = "vhd"
+if ($VMGeneration -eq 2) {
+  $VMDiskType = "vhdx"
+} 
+
 # check if image is extracted already
-if (!(test-path "$($ImageCachePath)\$($ImageOS)-$($stamp).vhd")) {
+if (!(test-path "$($ImageCachePath)\$($ImageOS)-$($stamp).$($VMDiskType)")) {
   try {
     if ($ImageFileExtension.EndsWith("zip")) {
-      Write-Host 'Expanding archive...' -NoNewline
+      Write-Host 'Expanding archive...'
       Expand-Archive -Path "$($ImageCachePath)\$($ImageOS)-$($stamp).$($ImageFileExtension)" -DestinationPath "$ImageCachePath" -Force
-    } elseif (($ImageFileExtension.EndsWith("tar.gz")) -or ($ImageFileExtension.EndsWith("tar.xz"))) {
-      Write-Host 'Expanding archive using bsdtar...' -NoNewline
+    }
+    elseif (($ImageFileExtension.EndsWith("tar.gz")) -or ($ImageFileExtension.EndsWith("tar.xz"))) {
+      Write-Host 'Expanding archive using bsdtar...'
       # using bsdtar - src: https://github.com/libarchive/libarchive/
       # src: https://unix.stackexchange.com/a/23746/353700
       #& $bsdtarPath "-x -C `"$($ImageCachePath)`" -f `"$($ImageCachePath)\$($ImageOS)-$($stamp).$($ImageFileExtension)`""
       Start-Process `
         -FilePath $bsdtarPath `
-        -ArgumentList  "-x","-C `"$($ImageCachePath)`"","-f `"$($ImageCachePath)\$($ImageOS)-$($stamp).$($ImageFileExtension)`"" `
+        -ArgumentList  "-x", "-C `"$($ImageCachePath)`"", "-f `"$($ImageCachePath)\$($ImageOS)-$($stamp).$($ImageFileExtension)`"" `
         -Wait -NoNewWindow `
         -RedirectStandardOutput "$($tempPath)\bsdtar.log"
-    } elseif ($ImageFileExtension.EndsWith("img")) {
+    }
+    elseif ($ImageFileExtension.EndsWith("img")) {
       Write-Verbose 'No need for archive extracting'
-    } else {
+    }
+    else {
       Write-Warning "Unsupported image in archive"
       exit 1
     }
 
     # rename bionic-server-cloudimg-amd64.vhd (or however they pack it) to $ImageFileName.vhd
-    $fileExpanded = Get-ChildItem "$($ImageCachePath)\*.vhd","$($ImageCachePath)\*.vhdx","$($ImageCachePath)\*.raw","$($ImageCachePath)\*.img" -File | Sort-Object LastWriteTime | Select-Object -last 1
+    $fileExpanded = Get-ChildItem "$($ImageCachePath)\*.vhd", "$($ImageCachePath)\*.vhdx", "$($ImageCachePath)\*.raw", "$($ImageCachePath)\*.img" -File | Sort-Object LastWriteTime | Select-Object -last 1
     Write-Verbose "Expanded file name: $fileExpanded"
-    if ($fileExpanded -like "*.vhd") {
-      Rename-Item -path $fileExpanded -newname "$ImageFileName.vhd"
-    } elseif ($fileExpanded -like "*.raw") {
+    if ($fileExpanded -like "*.$($VMDiskType)") {
+      Rename-Item -path $fileExpanded -newname "$ImageFileName.$($VMDiskType)"
+    }
+    elseif ($fileExpanded -like "*.raw") {
       Write-Host "qemu-img info for source untouched cloud image: "
       & $qemuImgPath info "$fileExpanded"
-      Write-Verbose "qemu-img convert to vhd"
-      Write-Verbose "$qemuImgPath convert -f raw $fileExpanded -O vpc $($ImageCachePath)\$ImageFileName.vhd"
-      & $qemuImgPath convert -f raw "$fileExpanded" -O vpc "$($ImageCachePath)\$($ImageFileName).vhd"
+      Write-Verbose "qemu-img convert to $($VMDiskType)"
+      Write-Verbose "$qemuImgPath convert -f raw $fileExpanded -O $($VMDiskType) $($ImageCachePath)\$ImageFileName.$($VMDiskType)"
+      & $qemuImgPath convert -f raw "$fileExpanded" -O $($VMDiskType) "$($ImageCachePath)\$($ImageFileName).$($VMDiskType)"
       # remove source image after conversion
       Remove-Item "$fileExpanded" -force
-    } elseif ($fileExpanded -like "*.img") {
+    }
+    elseif ($fileExpanded -like "*.img") {
       Write-Host "qemu-img info for source untouched cloud image: "
       & $qemuImgPath info "$fileExpanded"
-      Write-Verbose "qemu-img convert to vhd"
-      Write-Verbose "$qemuImgPath convert -f qcow2 $fileExpanded -O vpc $($ImageCachePath)\$ImageFileName.vhd"
-      & $qemuImgPath convert -f qcow2 "$fileExpanded" -O vpc "$($ImageCachePath)\$($ImageFileName).vhd"
+      
+      Write-Verbose "qemu-img convert to $($VMDiskType)"
+      Write-Verbose "$qemuImgPath convert -f qcow2 $fileExpanded -O $($VMDiskType) $($ImageCachePath)\$ImageFileName.$($VMDiskType)"
+      & $qemuImgPath convert -f qcow2 "$fileExpanded" -O $($VMDiskType) "$($ImageCachePath)\$($ImageFileName).$($VMDiskType)"
       # remove source image after conversion
       Remove-Item "$fileExpanded" -force
-    } else {
+    }
+    else {
       Write-Warning "Unsupported disk image extracted."
       exit 1
     }
-    Write-Host -ForegroundColor Green " Done."
-
-    Write-Host 'Convert VHD fixed to VHD dynamic...' -NoNewline
+    
+    Write-Host 'Convert $($VMDiskType) fixed to $($VMDiskType) dynamic...'
     try {
-      Convert-VHD -Path "$($ImageCachePath)\$ImageFileName.vhd" -DestinationPath "$($ImageCachePath)\$($ImageOS)-$($stamp).vhd" -VHDType Dynamic -DeleteSource
-      Write-Host -ForegroundColor Green " Done."
-    } catch {
+      Convert-VHD -Path "$($ImageCachePath)\$ImageFileName.$($VMDiskType)" -DestinationPath "$($ImageCachePath)\$($ImageOS)-$($stamp).$($VMDiskType)" -VHDType Dynamic -DeleteSource
+    }
+    catch {
       Write-Warning $_
       Write-Warning "Failed to convert the disk using 'Convert-VHD', falling back to qemu-img... "
       Write-Host "qemu-img info for source untouched cloud image: "
-      & $qemuImgPath info "$($ImageCachePath)\$ImageFileName.vhd"
+      & $qemuImgPath info "$($ImageCachePath)\$ImageFileName.$($VMDiskType)"
       Write-Verbose "qemu-img convert to vhd"
-      & $qemuImgPath convert "$($ImageCachePath)\$ImageFileName.vhd" -O vpc -o subformat=dynamic "$($ImageCachePath)\$($ImageOS)-$($stamp).vhd"
+      & $qemuImgPath convert "$($ImageCachePath)\$ImageFileName.$($VMDiskType)" -O $($VMDiskType) -o subformat=dynamic "$($ImageCachePath)\$($ImageOS)-$($stamp).$($VMDiskType)"
       # remove source image after conversion
-      Remove-Item "$($ImageCachePath)\$ImageFileName.vhd" -force
+      Remove-Item "$($ImageCachePath)\$ImageFileName.$($VMDiskType)" -force
 
       #Write-Warning "Failed to convert the disk, will use it as is..."
       #Rename-Item -path "$($ImageCachePath)\$ImageFileName.vhd" -newname "$($ImageCachePath)\$($ImageOS)-$($stamp).vhd" # not VHDX
-      Write-Host -ForegroundColor Green " Done."
     }
 
     if ($ConvertImageToNoCloud) {
-      Write-Host 'Modify VHD and convert cloud-init to NoCloud ...' -NoNewline
+      Write-Host 'Modify VHD and convert cloud-init to NoCloud ...'
       $process = Start-Process `
-      -FilePath cmd.exe `
-      -Wait -PassThru -NoNewWindow `
-      -ArgumentList "/c `"`"$(Join-Path $PSScriptRoot "wsl-convert-vhd-nocloud.cmd")`" `"$($ImageCachePath)\$($ImageOS)-$($stamp).vhd`"`""
+        -FilePath cmd.exe `
+        -Wait -PassThru -NoNewWindow `
+        -ArgumentList "/c `"`"$(Join-Path $PSScriptRoot "wsl-convert-vhd-nocloud.cmd")`" `"$($ImageCachePath)\$($ImageOS)-$($stamp).vhd`"`""
       # https://stackoverflow.com/a/16018287/1155121
       if ($process.ExitCode -ne 0) {
         throw "Failed to modify/convert VHD to NoCloud DataSource!"
       }
-      Write-Host -ForegroundColor Green " Done."
     }
 
   }
   catch {
-    cleanupFile "$($ImageCachePath)\$($ImageOS)-$($stamp).vhd"
+    cleanupFile "$($ImageCachePath)\$($ImageOS)-$($stamp).$($VMDiskType)"
     $ErrorMessage = $_.Exception.Message
     Write-Host "Error: $ErrorMessage"
     exit 1
   }
 }
 
-# File path for to-be provisioned VHD
-$VMDiskPath = "$($VMStoragePath)\$($VMName).vhd"
-if ($VMGeneration -eq 2) {
-  $VMDiskPath = "$($VMStoragePath)\$($VMName).vhdx"
-}
+# File path for to-be provisioned
+$VMDiskPath = "$($VMStoragePath)\$($VMName).$($VMDiskType)"
+
+
 cleanupFile $VMDiskPath
 
+fsutil sparse setflag "$($ImageCachePath)\$($ImageOS)-$($stamp).$($VMDiskType)" 0
+
 # Prepare VHD... (could also use copy)
-Write-Host "Prepare virtual disk..." -NoNewline
+Write-Host "Prepare virtual disk..."
 try {
   # block size bytes per recommendation https://learn.microsoft.com/en-us/windows-server/virtualization/hyper-v/best-practices-for-running-linux-on-hyper-v
-  Convert-VHD -Path "$($ImageCachePath)\$($ImageOS)-$($stamp).vhd" -DestinationPath $VMDiskPath -VHDType Dynamic -BlockSizeBytes 1MB
-  Write-Host -ForegroundColor Green " Done."
-  if ($VHDSizeBytes -and ($VHDSizeBytes -gt 30GB)) {
-    Write-Host "Resize VHD to $([int]($VHDSizeBytes / 1024 / 1024 / 1024)) GB..." -NoNewline
-    Resize-VHD -Path $VMDiskPath -SizeBytes $VHDSizeBytes
-    Write-Host -ForegroundColor Green " Done."
-  }
-} catch {
+  Convert-VHD -Path "$($ImageCachePath)\$($ImageOS)-$($stamp).$($VMDiskType)" -DestinationPath $VMDiskPath -VHDType Dynamic -BlockSizeBytes 1MB #-ErrorAction SilentlyContinue
+}
+catch {
+  Write-verbose "An exception occurred: $($_.Exception.Message)"
   Write-Warning "Failed to convert and resize, will just copy it ..."
-  Copy-Item "$($ImageCachePath)\$($ImageOS)-$($stamp).vhd" -Destination $VMDiskPath
+  Copy-Item "$($ImageCachePath)\$($ImageOS)-$($stamp).$($VMDiskType)" -Destination $VMDiskPath
+}
+
+if ($VHDSizeBytes -ne 0) {
+  Write-Host "Resize VHD to $([int]($VHDSizeBytes / 1024 / 1024 / 1024)) GB..."
+  Resize-VHD -Path $VMDiskPath -SizeBytes $VHDSizeBytes
 }
 
 # Create new virtual machine and start it
-Write-Host "Create VM..." -NoNewline
+Write-Host "Create VM..."
 $vm = new-vm -Name $VMName -MemoryStartupBytes $VMMemoryStartupBytes `
-               -Path "$VMMachinePath" `
-               -VHDPath "$VMDiskPath" -Generation $VMGeneration `
-               -BootDevice VHD -Version $VMVersion | out-null
+  -Path "$VMMachinePath" `
+  -VHDPath "$VMDiskPath" -Generation $VMGeneration `
+  -BootDevice VHD -Version $VMVersion | out-null
 Set-VMProcessor -VMName $VMName -Count $VMProcessorCount
 If ($VMDynamicMemoryEnabled) {
   Set-VMMemory -VMName $VMName -DynamicMemoryEnabled $VMDynamicMemoryEnabled -MaximumBytes $VMMaximumBytes -MinimumBytes $VMMinimumBytes
-} else {
+}
+else {
   Set-VMMemory -VMName $VMName -DynamicMemoryEnabled $VMDynamicMemoryEnabled
 }
 # make sure VM has DVD drive needed for provisioning
@@ -1011,22 +1115,37 @@ if ($null -eq (Get-VMDvdDrive -VMName $VMName)) {
 }
 Set-VMDvdDrive -VMName $VMName -Path "$metaDataIso"
 
+# add extra VHDs
+if ($ExtraVHDsSizeBytes) {
+  $extraVHDIndex = 0
+  foreach ($extraVHD in $ExtraVHDsSizeBytes) {
+    $extraVHDIndex++
+    $extraVHDPath = "$($VMStoragePath)\$($VMName)-$($extraVHDIndex).$($VMDiskType)"
+    Write-Host "Create extra VHD $($extraVHDIndex)..."
+    New-VHD -Path $extraVHDPath -SizeBytes $extraVHD -Dynamic | out-null
+    Add-VMHardDiskDrive -VMName $VMName -Path $extraVHDPath
+  }
+}
+
 If (($null -ne $virtualSwitchName) -and ($virtualSwitchName -ne "")) {
   Write-Verbose "Connecting VMnet adapter to virtual switch '$virtualSwitchName'..."
-} else {
+}
+else {
   Write-Warning "No Virtual network switch given."
   $SwitchList = Get-VMSwitch | Select-Object Name
   If ($SwitchList.Count -eq 1 ) {
     Write-Warning "Using single Virtual switch found: '$($SwitchList.Name)'"
     $virtualSwitchName = $SwitchList.Name
-  } elseif (Get-VMSwitch | Select-Object Name | Select-String "Default Switch") {
+  }
+  elseif (Get-VMSwitch | Select-Object Name | Select-String "Default Switch") {
     Write-Warning "Multiple Switches found; using found 'Default Switch'"
     $virtualSwitchName = "Default Switch"
   }
 }
 If (($null -ne $virtualSwitchName) -and ($virtualSwitchName -ne "")) {
   Get-VMNetworkAdapter -VMName $VMName | Connect-VMNetworkAdapter -SwitchName "$virtualSwitchName"
-} else {
+}
+else {
   Write-Warning "No Virtual network switch given and could not automatically selected."
   Write-Warning "Please use parameter -virtualSwitchName 'Switch Name'."
   exit 1
@@ -1035,7 +1154,8 @@ If (($null -ne $virtualSwitchName) -and ($virtualSwitchName -ne "")) {
 if (($null -ne $VMStaticMacAddress) -and ($VMStaticMacAddress -ne "")) {
   Write-Verbose "Setting static MAC address '$VMStaticMacAddress' on VMnet adapter..."
   Set-VMNetworkAdapter -VMName $VMName -StaticMacAddress $VMStaticMacAddress
-} else {
+}
+else {
   Write-Verbose "Using default dynamic MAC address asignment."
 }
 
@@ -1049,54 +1169,51 @@ If ((($null -ne $VMVlanID) -and ([int]($VMVlanID) -ne 0)) -or
     Write-Host "Setting native Vlan ID $VMNativeVlanID with trunk Vlan IDs '$VMAllowedVlanIDList'"
     Write-Host "on virtual network adapter '$VMNetworkAdapterName'..."
     Set-VMNetworkAdapterVlan -VMName $VMName -VMNetworkAdapterName "$VMNetworkAdapterName" `
-                -Trunk  -NativeVlanID $VMNativeVlanID -AllowedVlanIDList $VMAllowedVlanIDList
-  } else {
+      -Trunk  -NativeVlanID $VMNativeVlanID -AllowedVlanIDList $VMAllowedVlanIDList
+  }
+  else {
     Write-Host "Setting Vlan ID $VMVlanID on virtual network adapter '$VMNetworkAdapterName'..."
     Set-VMNetworkAdapterVlan -VMName $VMName -VMNetworkAdapterName "$VMNetworkAdapterName" `
-                -Access -VlanId $VMVlanID
+      -Access -VlanId $VMVlanID
   }
-} else {
+}
+else {
   Write-Verbose "Let virtual network adapter '$VMNetworkAdapterName' untagged."
 }
 
 if ($VMVMQ) {
-    Write-Host "Enable Virtual Machine Queue (100)... " -NoNewline
-    Set-VMNetworkAdapter -VMName $VMName -VmqWeight 100
-    Write-Host -ForegroundColor Green " Done."
+  Write-Host "Enable Virtual Machine Queue (100)... "
+  Set-VMNetworkAdapter -VMName $VMName -VmqWeight 100
 }
 
 if ($VMDhcpGuard) {
-    Write-Host "Enable DHCP Guard... " -NoNewline
-    Set-VMNetworkAdapter -VMName $VMName -DhcpGuard On
-    Write-Host -ForegroundColor Green " Done."
+  Write-Host "Enable DHCP Guard... "
+  Set-VMNetworkAdapter -VMName $VMName -DhcpGuard On
 }
 
 if ($VMRouterGuard) {
-    Write-Host "Enable Router Guard... " -NoNewline
-    Set-VMNetworkAdapter -VMName $VMName -RouterGuard On
-    Write-Host -ForegroundColor Green " Done."
+  Write-Host "Enable Router Guard... "
+  Set-VMNetworkAdapter -VMName $VMName -RouterGuard On
 }
 
 if ($VMAllowTeaming) {
-    Write-Host "Enable Allow Teaming... " -NoNewline
-    Set-VMNetworkAdapter -VMName $VMName -AllowTeaming On
-    Write-Host -ForegroundColor Green " Done."
+  Write-Host "Enable Allow Teaming... "
+  Set-VMNetworkAdapter -VMName $VMName -AllowTeaming On
 }
 
 if ($VMPassthru) {
-    Write-Host "Enable Passthru... " -NoNewline
-    Set-VMNetworkAdapter -VMName $VMName -Passthru
-    Write-Host -ForegroundColor Green " Done."
+  Write-Host "Enable Passthru... "
+  Set-VMNetworkAdapter -VMName $VMName -Passthru
 }
 
 #if (($null -ne $VMMaximumBandwidth) -and ($([int]($VMMaximumBandwidth)) -gt 0)) {
 #  if (($null -ne $VMMinimumBandwidthWeight) -and ($([int]($VMMinimumBandwidthWeight)) -gt 0)) {
-#    Write-Host "Set maximum bandwith to $([int]($VMMaximumBandwidth)) with minimum bandwidth weigth $([int]($VMMinimumBandwidthWeight))" -NoNewline
+#    Write-Host "Set maximum bandwith to $([int]($VMMaximumBandwidth)) with minimum bandwidth weigth $([int]($VMMinimumBandwidthWeight))"
 #    Set-VMNetworkAdapter -VMName $VMName -MaximumBandwidth $([int]($VMMaximumBandwidth)) `n
 #                                         -MinimumBandwidthWeight $([int]($VMMinimumBandwidthWeight))
 #  } elseif (($null -ne $VMMinimumBandwidthAbsolute) -and ($([int]($VMMinimumBandwidthAbsolute)) -gt 0) `
 #           -and ($([int]($VMMaximumBandwidth)) -gt ($([int]($VMMinimumBandwidthAbsolute))))) {
-#    Write-Host "Set maximum bandwith to $([int]($VMMaximumBandwidth)) with absolute minimum bandwidth $([int]($VMMinimumBandwidthAbsolute)) " -NoNewline
+#    Write-Host "Set maximum bandwith to $([int]($VMMaximumBandwidth)) with absolute minimum bandwidth $([int]($VMMinimumBandwidthAbsolute)) "
 #    Set-VMNetworkAdapter -VMName $VMName -MaximumBandwidth $([int]($VMMaximumBandwidth)) `n
 #                                         -MinimumBandwidthAbsolute $([int]($VMMinimumBandwidthAbsolute))
 #  } else {
@@ -1110,14 +1227,14 @@ if ($VMPassthru) {
 if ($VMMacAddressSpoofing) {
   Write-Verbose "Enable MAC address Spoofing on VMnet adapter..."
   Set-VMNetworkAdapter -VMName $VMName -MacAddressSpoofing On
-} else {
+}
+else {
   Write-Verbose "Using default dynamic MAC address asignment."
 }
 
 if ($VMExposeVirtualizationExtensions) {
   Write-Host "Expose Virtualization Extensions to Guest ..."
   Set-VMProcessor -VMName $VMName -ExposeVirtualizationExtensions $true
-  Write-Host -ForegroundColor Green " Done."
 }
 
 # hyper-v gen2 specific features
@@ -1130,7 +1247,8 @@ if ($VMGeneration -eq 2) {
     # Ubuntu 18.04+ supports enhanced session and so Debian 10/11
     Write-Verbose "Enable enhanced session mode..."
     Set-VM -VMName $VMName -EnhancedSessionTransportType HvSocket
-  } else {
+  }
+  else {
     Write-Verbose "Enhanced session mode not enabled because host has not activated support for it."
   }
 
@@ -1140,33 +1258,30 @@ if ($VMGeneration -eq 2) {
   # PS> Enable-VMIntegrationService -VMName $VMName -Name "Gastdienstschnittstelle"
   # https://administrator.de/forum/hyper-v-cmdlet-powershell-sprachproblem-318175.html
   Get-VMIntegrationService -VMName $VMName `
-            | Where-Object {$_.Name -match 'Gastdienstschnittstelle|Guest Service Interface'} `
-            | Enable-VMIntegrationService
+  | Where-Object { $_.Name -match 'Gastdienstschnittstelle|Guest Service Interface' } `
+  | Enable-VMIntegrationService
 }
 
 # disable automatic checkpoints, https://github.com/hashicorp/vagrant/issues/10251#issuecomment-425734374
-if ($null -ne (Get-Command Hyper-V\Set-VM).Parameters["AutomaticCheckpointsEnabled"]){
+if ($null -ne (Get-Command Hyper-V\Set-VM).Parameters["AutomaticCheckpointsEnabled"]) {
   Hyper-V\Set-VM -VMName $VMName -AutomaticCheckpointsEnabled $false
 }
 
-Write-Host -ForegroundColor Green " Done."
 
 # https://social.technet.microsoft.com/Forums/en-US/d285d517-6430-49ba-b953-70ae8f3dce98/guest-asset-tag?forum=winserverhyperv
 Write-Host "Set SMBIOS serial number ..."
 $vmserial_smbios = $VmMachineId
 if ($ImageTypeAzure) {
   # set chassis asset tag to Azure constant as documented in https://github.com/canonical/cloud-init/blob/5e6ecc615318b48e2b14c2fd1f78571522848b4e/cloudinit/sources/helpers/azure.py#L1082
-  Write-Host "Set Azure chasis asset tag ..." -NoNewline
+  Write-Host "Set Azure chasis asset tag ..."
   # https://social.technet.microsoft.com/Forums/en-US/d285d517-6430-49ba-b953-70ae8f3dce98/guest-asset-tag?forum=winserverhyperv
   & .\Set-VMAdvancedSettings.ps1 -VM $VMName -ChassisAssetTag '7783-7084-3265-9085-8269-3286-77' -Force -Verbose:$verbose
-  Write-Host -ForegroundColor Green " Done."
-
+  
   # also try to enable NoCloud via SMBIOS  https://cloudinit.readthedocs.io/en/22.4.2/topics/datasources/nocloud.html
   $vmserial_smbios = 'ds=nocloud'
 }
 Write-Host "SMBIOS SN: $vmserial_smbios"
 & .\Set-VMAdvancedSettings.ps1 -VM $VMName -BIOSSerialNumber $vmserial_smbios -ChassisSerialNumber $vmserial_smbios -Force -Verbose:$verbose
-Write-Host -ForegroundColor Green " Done."
 
 # redirect com port to pipe for VM serial output, src: https://superuser.com/a/1276263/145585
 Set-VMComPort -VMName $VMName -Path \\.\pipe\$VMName-com1 -Number 1
@@ -1181,14 +1296,12 @@ Remove-Item -Path $tempPath -Recurse -Force
 # Make checkpoint when debugging https://stackoverflow.com/a/16297557/1155121
 if ($PSBoundParameters.Debug -eq $true) {
   # make VM snapshot before 1st run
-  Write-Host "Creating checkpoint..." -NoNewline
+  Write-Host "Creating checkpoint..."
   Checkpoint-VM -Name $VMName -SnapshotName Initial
-  Write-Host -ForegroundColor Green " Done."
 }
 
-Write-Host "Starting VM..." -NoNewline
+Write-Host "Starting VM..."
 Start-VM $VMName
-Write-Host -ForegroundColor Green " Done."
 
 # TODO check if VM has got an IP ADDR, if address is missing then write error because provisioning won't work without IP, src: https://stackoverflow.com/a/27999072/1155121
 
@@ -1209,7 +1322,5 @@ if ($ShowSerialConsoleWindow) {
 
 if ($ShowVmConnectWindow) {
   # Open up VMConnect
-  Start-Process "vmconnect" "localhost","$VMName" -WindowStyle Normal
+  Start-Process "vmconnect" "localhost", "$VMName" -WindowStyle Normal
 }
-
-Write-Host "Done"
