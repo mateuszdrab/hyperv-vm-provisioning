@@ -24,16 +24,16 @@ function Set-PowershellProxy {
     # if proxy available, use it
     #if(Test-Connection $proxy_host -Count 1 -Quiet) # only ping
     $script:nc = Test-NetConnection -Computername $proxy_host -Port $proxy_port
-    if ($script:nc.TcpTestSucceeded)
-    {
+    if ($script:nc.TcpTestSucceeded) {
         $global:PSDefaultParameterValues = @{
-            'Invoke-RestMethod:Proxy'="http://$($proxy_host):$($proxy_port)"
-            'Invoke-WebRequest:Proxy'="http://$($proxy_host):$($proxy_port)"
-            '*:ProxyUseDefaultCredentials'=$useDefaultCredentials
+            'Invoke-RestMethod:Proxy'      = "http://$($proxy_host):$($proxy_port)"
+            'Invoke-WebRequest:Proxy'      = "http://$($proxy_host):$($proxy_port)"
+            '*:ProxyUseDefaultCredentials' = $useDefaultCredentials
         }
         Write-Host "Proxy configured $($proxy_host):$($proxy_port)"
         return $true
-    } else {
+    }
+    else {
         Write-Host "Proxy $($proxy_host):$($proxy_port) not available"
     }
     return $false
