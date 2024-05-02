@@ -6,7 +6,7 @@
 
 - Provision Linux VM using cloud-init on Hyper-V in a single command
 - Use custom userdata yaml, see [examples](https://cloudinit.readthedocs.io/en/latest/topics/examples.html)
-- Using Ubuntu Cloud Images certified for Azure and proven to work reliably on Hyper-V (22.04 jammy, 20.04 focal, 18.04 bionic)
+- Using Ubuntu Cloud Images certified for Azure and proven to work reliably on Hyper-V (24.04 noble, 22.04 jammy, 20.04 focal, 18.04 bionic)
   with [tailored Microsoft kernel](https://www.neowin.net/news/canonical--microsoft-make-azure-tailored-linux-kernel/) included
 - Generation 1 for Azure migration friendliness or Generation 2 Hyper-V virtual machine type supported
 - Automatic update check for a newer image on provisioning
@@ -20,15 +20,15 @@
 
 Parameter `ImageVersion` accepts the following values:
 
-- Ubuntu: `"18.04"`, `"20.04"`, `"22.04"`, `"22.04-azure"`
+- Ubuntu: `"18.04"`, `"20.04"`, `"22.04"`, `"22.04-azure"`, `"24.04"`
 - Debian: `"10"`, `"11"`
 
 Remark/Disclaimer: Azure image types by default supports `DataSourceAzure` cloud-init type which expects Azure environment. Since we are not emulating Azure cloud-init environment the only way to use those images is to converting those images to `NoCloud` datasource - this requires at least Windows 11 build 22000 because it uses wsl --mount (see [wsl-convert-vhd-nocloud.cmd](wsl-convert-vhd-nocloud.cmd)).
 
-Default username is `admin` and password is `Passw0rd` (easily overriden with script parameters). Use standard parameters
-as needed: unattended use `-Force`, get some additional details `-Verbose` or to make initial checkpoint for VM use `-Debug`.
+Default username and password is not configured so no account will be created (this can be easily overriden with script parameters).
+Use standard parameters as needed: unattended use `-Force`, get some additional details `-Verbose` or to make initial checkpoint for VM use `-Debug`.
 
-You should provide your own custom `userdata.yaml` as script parameter and customize the final image.
+You can provide your own custom `userdata.yaml` as script parameter and customize the final image.
 
 ## Download
 
@@ -46,6 +46,7 @@ requirement for provisioning to work properly. You need to reboot VM after addin
 to finish with provisioning.
 
 ## Similar projects and credits
+
 <https://blogs.msdn.microsoft.com/virtual_pc_guy/2015/06/23/building-a-daily-ubuntu-image-for-hyper-v/>
 
 <https://github.com/MicrosoftDocs/Virtualization-Documentation/blob/master/hyperv-samples/benarm-powershell/Ubuntu-VM-Build/BaseUbuntuBuild.ps1>
