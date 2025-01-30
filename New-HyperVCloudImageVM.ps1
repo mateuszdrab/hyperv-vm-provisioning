@@ -905,7 +905,7 @@ if (!(test-path "$metaDataIso")) { throw "Error creating metadata iso" }
 Write-Verbose "Metadata iso written"
 
 # storage location for base images
-$ImageCachePath = Join-Path $PSScriptRoot $("cache\CloudImage-$ImageOS-$ImageVersion")
+$ImageCachePath = $("C:\Users\Public\Documents\Hyper-V\CloudImages\$ImageOS-$ImageVersion")
 if (!(test-path $ImageCachePath)) { mkdir -Path $ImageCachePath | out-null }
 
 # Get the timestamp of the target build on the cloud-images site
