@@ -48,7 +48,7 @@ param(
   #[switch] $VMMaximumBandwidth = $null,
   [switch] $VMMacAddressSpoofing = $false,
   [switch] $VMExposeVirtualizationExtensions = $false,
-  [string] $VMVersion = "8.0", # version 8.0 for hyper-v 2016 compatibility , check all possible values with Get-VMHostSupportedVersion
+  [string] $VMVersion = "12.0", # check all possible values with Get-VMHostSupportedVersion
   [string] $VMHostname = $VMName,
   [string] $VMMachine_StoragePath = $null, # if defined setup machine path with storage path as subfolder
   [string] $VMMachinePath = $null, # if not defined here default Virtal Machine path is used
@@ -84,7 +84,9 @@ param(
   [switch] $ShowVmConnectWindow = $false,
   [switch] $Force = $false,
   [uint64[]] $ExtraVHDsSizeBytes = @(),
-  [string[]] $ExtraVHDsMounts = @()   
+  [string[]] $ExtraVHDsMounts = @(),
+  [bool] $AutoStart = $true,
+  [switch] $NoSecureBoot
 )
 
 [System.Threading.Thread]::CurrentThread.CurrentUICulture = "en-US"
@@ -125,6 +127,8 @@ $vmms = Get-Command vmms.exe
 if (([System.Version]$vmms.fileversioninfo.productversion).Major -lt 10) {
   throw "Unsupported Hyper-V version. Minimum supported version for is Hyper-V 2016."
 }
+
+Write-Output "Creating VM: $VMName" 
 
 # Helper function for no error file cleanup
 function cleanupFile ([string]$file) {
@@ -1239,10 +1243,15 @@ if ($VMExposeVirtualizationExtensions) {
 
 # hyper-v gen2 specific features
 if ($VMGeneration -eq 2) {
-  Write-Verbose "Setting secureboot for Hyper-V Gen2..."
-  # configure secure boot, src: https://www.altaro.com/hyper-v/hyper-v-2016-support-linux-secure-boot/
-  Set-VMFirmware -VMName $VMName -EnableSecureBoot On -SecureBootTemplateId ([guid]'272e7447-90a4-4563-a4b9-8e4ab00526ce')
-
+  Write-Verbose "Setting SecureBoot for Hyper-V Gen2..."
+  if ($NoSecureBoot) {
+    Set-VMFirmware -VMName $VMName -EnableSecureBoot Off
+  }
+  else {
+    # configure secure boot, src: https://www.altaro.com/hyper-v/hyper-v-2016-support-linux-secure-boot/
+    Set-VMFirmware -VMName $VMName -EnableSecureBoot On -SecureBootTemplateId ([guid]'272e7447-90a4-4563-a4b9-8e4ab00526ce')
+  }
+  
   if ($(Get-VMHost).EnableEnhancedSessionMode -eq $true) {
     # Ubuntu 18.04+ supports enhanced session and so Debian 10/11
     Write-Verbose "Enable enhanced session mode..."
@@ -1300,22 +1309,25 @@ if ($PSBoundParameters.Debug -eq $true) {
   Checkpoint-VM -Name $VMName -SnapshotName Initial
 }
 
-Write-Host "Starting VM..."
-Start-VM $VMName
+if ($AutoStart) {
+  Write-Host "Starting VM..."
+  Start-VM $VMName
 
-# TODO check if VM has got an IP ADDR, if address is missing then write error because provisioning won't work without IP, src: https://stackoverflow.com/a/27999072/1155121
 
+  # TODO check if VM has got an IP ADDR, if address is missing then write error because provisioning won't work without IP, src: https://stackoverflow.com/a/27999072/1155121
 
-if ($ShowSerialConsoleWindow) {
-  # start putty or hvc.exe with serial connection to newly created VM
-  try {
-    Get-Command "putty" | out-null
-    start-sleep -seconds 2
-    & "PuTTY" -serial "\\.\pipe\$VMName-com1" -sercfg "115200,8,n,1,N"
-  }
-  catch {
-    Write-Verbose "putty not available, will try Windows Terminal + hvc.exe"
-    Start-Process "wt.exe" "new-tab cmd /k hvc.exe serial $VMName" -WindowStyle Normal
+  if ($ShowSerialConsoleWindow) {
+    # start putty or hvc.exe with serial connection to newly created VM
+    try {
+      Get-Command "putty" | out-null
+      start-sleep -seconds 2
+      & "PuTTY" -serial "\\.\pipe\$VMName-com1" -sercfg "115200,8,n,1,N"
+    }
+    catch {
+      Write-Verbose "putty not available, will try Windows Terminal + hvc.exe"
+      Start-Process "wt.exe" "new-tab cmd /k hvc.exe serial $VMName" -WindowStyle Normal
+    }
+
   }
 
 }
