@@ -1,3 +1,4 @@
 cache/*
+drivers/*
 local
 *.log
