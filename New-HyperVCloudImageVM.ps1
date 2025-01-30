@@ -1032,7 +1032,7 @@ if (!(test-path "$($ImageCachePath)\$($ImageOS)-$($stamp).$($VMDiskType)")) {
       exit 1
     }
     
-    Write-Host 'Convert $($VMDiskType) fixed to $($VMDiskType) dynamic...'
+    Write-Host "Converting $($VMDiskType) fixed to $($VMDiskType) dynamic..."
     try {
       Convert-VHD -Path "$($ImageCachePath)\$ImageFileName.$($VMDiskType)" -DestinationPath "$($ImageCachePath)\$($ImageOS)-$($stamp).$($VMDiskType)" -VHDType Dynamic -DeleteSource
     }
