@@ -20,6 +20,9 @@ update-secureboot-policy --new-key
 echo "Compiling dxgkrnl-dkms..."
 curl -fsSL https://content.staralt.dev/dxgkrnl-dkms/main/install.sh | sudo bash -esx
 
+echo "Enrolling MOK key... password is 'ubuntugpu'"
+echo "ubuntugpu" | update-secureboot-policy --enroll-key
+
 # if --install-docker flag is set, then install Docker and NVIDIA Container Toolkit
 if [ "$1" == "--install-docker" ]; then
     echo "Installing Docker..."
@@ -37,9 +40,6 @@ if [ "$1" == "--install-docker" ]; then
     echo "Configuring Docker for NVIDIA Container Toolkit..."
     nvidia-ctk runtime configure --runtime=docker
 fi
-
-echo "Enrolling MOK key... password is 'ubuntugpu'"
-echo "ubuntugpu" | update-secureboot-policy --enroll-key
 
 echo "Rebooting in 10 seconds..."
 sleep 10 && reboot
