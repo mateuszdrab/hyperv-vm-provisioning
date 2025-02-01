@@ -1,6 +1,8 @@
 ﻿param(
     [string]$UserName = "root",
-    [string]$VMName = $null
+    [string]$VMName = $null,
+    [switch]$ShowVmConnectWindow,
+    [string]$GpuInstallScriptArgs = ""
 )
 
 if ($VMName -eq $null) {
@@ -27,4 +29,8 @@ scp -r "C:\Program Files\WSL\lib" ${UserName}@${TargetHost}:~/wsl/
 
 scp .\install-gpu.sh ${UserName}@${TargetHost}:/tmp/
 
-ssh ${UserName}@${TargetHost} 'chmod +x /tmp/install-gpu.sh && /tmp/install-gpu.sh'
+ssh ${UserName}@${TargetHost} "chmod +x /tmp/install-gpu.sh && /tmp/install-gpu.sh $GpuInstallScriptArgs"
+
+if ($ShowVmConnectWindow) {
+    Start-Process "vmconnect" "localhost", "$VMName" -WindowStyle Normal
+}
