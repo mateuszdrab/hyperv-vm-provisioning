@@ -1,8 +1,5 @@
 #!/bin/bash
-set -e
-
-echo "Compiling dxgkrnl-dkms..."
-curl -fsSL https://content.staralt.dev/dxgkrnl-dkms/main/install.sh | sudo bash -es
+set -ex
 
 echo "Moving files and setting permissions..."
 mv ~/wsl /usr/lib/wsl
@@ -16,6 +13,12 @@ ln -s /usr/lib/wsl/lib/libnvoptix.so.1 /usr/lib/wsl/lib/libnvoptix_loader.so.1
 echo "Updating ldconfig..."
 sh -c 'echo "/usr/lib/wsl/lib" > /etc/ld.so.conf.d/ld.wsl.conf'
 ldconfig
+
+echo "Generating MOK key..."
+update-secureboot-policy --new-key
+
+echo "Compiling dxgkrnl-dkms..."
+curl -fsSL https://content.staralt.dev/dxgkrnl-dkms/main/install.sh | sudo bash -esx
 
 echo "Installing Docker..."
 curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
@@ -32,5 +35,8 @@ apt-get install -y nvidia-container-toolkit
 echo "Configuring Docker for NVIDIA Container Toolkit..."
 nvidia-ctk runtime configure --runtime=docker
 
-echo "Rebooting..."
-reboot
+echo "Enrolling MOK key... password is 'ubuntugpu'"
+echo "ubuntugpu" | update-secureboot-policy --enroll-key
+
+echo "Rebooting in 10 seconds..."
+sleep 10 && reboot
