@@ -128,7 +128,7 @@ if (([System.Version]$vmms.fileversioninfo.productversion).Major -lt 10) {
   throw "Unsupported Hyper-V version. Minimum supported version for is Hyper-V 2016."
 }
 
-Write-Output "Creating VM: $VMName" 
+Write-Verbose "Creating VM: $VMName" 
 
 # Helper function for no error file cleanup
 function cleanupFile ([string]$file) {
@@ -652,7 +652,7 @@ bootcmd:
 
 # bootcmd can be setup like runcmd but would run at very early stage
 # on every cloud-init assisted boot if not prepended by command "cloud-init-per once|instance|always":
-$(if ($NetAutoconfig -eq $true) { "#" })bootcmd:
+# $(if ($NetAutoconfig -eq $true) { "#" })bootcmd:
 $(if ($NetAutoconfig -eq $true) { "#" })  - [ cloud-init-per, once, fix-dhcp, sh, -c, sed -e 's/#timeout 60;/timeout 1;/g' -i /etc/dhcp/dhclient.conf ]
 runcmd:
 $(if (($NetAutoconfig -eq $false) -and ($NetConfigType -ieq "ENI-file")) {
@@ -903,10 +903,11 @@ Start-Process `
   -FilePath $oscdimgPath `
   -ArgumentList  "`"$($tempPath)\Bits`"", "`"$metaDataIso`"", "-lCIDATA", "-d", "-n" `
   -Wait -NoNewWindow `
-  -RedirectStandardOutput "$($tempPath)\oscdimg.log"
+  -RedirectStandardOutput "$($tempPath)\oscdimg.log" `
+  -RedirectStandardError "$($tempPath)\oscdimg.err"
 
 if (!(test-path "$metaDataIso")) { throw "Error creating metadata iso" }
-Write-Verbose "Metadata iso written"
+Write-Verbose "Metadata ISO written"
 
 # storage location for base images
 $ImageCachePath = $("C:\Users\Public\Documents\Hyper-V\CloudImages\$ImageOS-$ImageVersion")
