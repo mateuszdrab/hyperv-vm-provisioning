@@ -9,7 +9,7 @@ if ($VMName -eq $null) {
 }
 
 # Copy the GPU driver files to the VM
-$TargetHost = (Get-VM -Name $VMName).NetworkAdapters.IPAddresses[0]
+$TargetHost = (Get-VM -Name $VMName).NetworkAdapters[0].IPAddresses[0]
 
 # Create a destination folder.
 ssh ${UserName}@${TargetHost} "mkdir -p ~/wsl/drivers ~/wsl/lib"
