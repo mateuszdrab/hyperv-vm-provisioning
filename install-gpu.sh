@@ -20,20 +20,23 @@ update-secureboot-policy --new-key
 echo "Compiling dxgkrnl-dkms..."
 curl -fsSL https://content.staralt.dev/dxgkrnl-dkms/main/install.sh | sudo bash -esx
 
-echo "Installing Docker..."
-curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
-sh /tmp/get-docker.sh
+# if --install-docker flag is set, then install Docker and NVIDIA Container Toolkit
+if [ "$1" == "--install-docker" ]; then
+    echo "Installing Docker..."
+    curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
+    sh /tmp/get-docker.sh
 
-echo "Installing NVIDIA Container Toolkit..."
-curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg &&
-    curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list |
-    sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' |
-        tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
-apt-get update
-apt-get install -y nvidia-container-toolkit
+    echo "Installing NVIDIA Container Toolkit..."
+    curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg &&
+        curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list |
+        sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' |
+            tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+    apt-get update
+    apt-get install -y nvidia-container-toolkit
 
-echo "Configuring Docker for NVIDIA Container Toolkit..."
-nvidia-ctk runtime configure --runtime=docker
+    echo "Configuring Docker for NVIDIA Container Toolkit..."
+    nvidia-ctk runtime configure --runtime=docker
+fi
 
 echo "Enrolling MOK key... password is 'ubuntugpu'"
 echo "ubuntugpu" | update-secureboot-policy --enroll-key
