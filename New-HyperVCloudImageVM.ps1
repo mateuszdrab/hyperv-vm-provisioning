@@ -894,7 +894,7 @@ if ($ImageTypeAzure) {
 
 # Create meta data ISO image, src: https://cloudinit.readthedocs.io/en/latest/topics/datasources/nocloud.html
 # both azure and nocloud support same cdrom filesystem https://github.com/canonical/cloud-init/blob/606a0a7c278d8c93170f0b5fb1ce149be3349435/cloudinit/sources/DataSourceAzure.py#L1972
-Write-Host "Creating metadata iso for VM provisioning"
+Write-Verbose "Creating metadata iso for VM provisioning"
 $metaDataIso = "$($VMStoragePath)\$($VMName)-metadata.iso"
 Write-Verbose "Filename: $metaDataIso"
 cleanupFile $metaDataIso
@@ -930,15 +930,15 @@ if (!(test-path "$($ImageCachePath)\$($ImageOS)-$($stamp).$($ImageFileExtension)
   try {
     # If we do not have a matching image - delete the old ones and download the new one
     Write-Verbose "Did not find: $($ImageCachePath)\$($ImageOS)-$($stamp).$($ImageFileExtension)"
-    Write-Host 'Removing old images from cache...'
+    Write-Verbose 'Removing old images from cache...'
     Remove-Item "$($ImageCachePath)" -Exclude 'baseimagetimestamp.txt', "$($ImageOS)-$($stamp).*" -Recurse -Force
     
     # get headers for content length
-    Write-Host 'Check new image size ...'
+    Write-Verbose 'Check new image size ...'
     $response = Invoke-WebRequest "$($ImagePath).$($ImageFileExtension)" -UseBasicParsing -Method Head
     $downloadSize = [int]$response.Headers["Content-Length"]
     
-    Write-Host "Downloading new Cloud image ($([int]($downloadSize / 1024 / 1024)) MB)..."
+    Write-Verbose "Downloading new Cloud image ($([int]($downloadSize / 1024 / 1024)) MB)..."
     Write-Verbose $(Get-Date)
     $ProgressPreference = "SilentlyContinue" #Disable progress indicator because it is causing Invoke-WebRequest to be very slow
     # download new image
@@ -950,7 +950,7 @@ if (!(test-path "$($ImageCachePath)\$($ImageOS)-$($stamp).$($ImageFileExtension)
       -newname "$($ImageOS)-$($stamp).$($ImageFileExtension)"
     
     # check file hash
-    Write-Host "Checking file hash for downloaded image..."
+    Write-Verbose "Checking file hash for downloaded image..."
     Write-Verbose $(Get-Date)
     $hashSums = [System.Text.Encoding]::UTF8.GetString((Invoke-WebRequest $ImageHashPath -UseBasicParsing).Content)
     Switch -Wildcard ($ImageHashPath) {
@@ -969,7 +969,7 @@ if (!(test-path "$($ImageCachePath)\$($ImageOS)-$($stamp).$($ImageFileExtension)
   catch {
     cleanupFile "$($ImageCachePath)\$($ImageOS)-$($stamp).$($ImageFileExtension)"
     $ErrorMessage = $_.Exception.Message
-    Write-Host "Error: $ErrorMessage"
+    Write-Error "$ErrorMessage"
     exit 1
   }
 }
@@ -984,11 +984,11 @@ if ($VMGeneration -eq 2) {
 if (!(test-path "$($ImageCachePath)\$($ImageOS)-$($stamp).$($VMDiskType)")) {
   try {
     if ($ImageFileExtension.EndsWith("zip")) {
-      Write-Host 'Expanding archive...'
+      Write-Verbose 'Expanding archive...'
       Expand-Archive -Path "$($ImageCachePath)\$($ImageOS)-$($stamp).$($ImageFileExtension)" -DestinationPath "$ImageCachePath" -Force
     }
     elseif (($ImageFileExtension.EndsWith("tar.gz")) -or ($ImageFileExtension.EndsWith("tar.xz"))) {
-      Write-Host 'Expanding archive using bsdtar...'
+      Write-Verbose 'Expanding archive using bsdtar...'
       # using bsdtar - src: https://github.com/libarchive/libarchive/
       # src: https://unix.stackexchange.com/a/23746/353700
       #& $bsdtarPath "-x -C `"$($ImageCachePath)`" -f `"$($ImageCachePath)\$($ImageOS)-$($stamp).$($ImageFileExtension)`""
@@ -1013,7 +1013,7 @@ if (!(test-path "$($ImageCachePath)\$($ImageOS)-$($stamp).$($VMDiskType)")) {
       Rename-Item -path $fileExpanded -newname "$ImageFileName.$($VMDiskType)"
     }
     elseif ($fileExpanded -like "*.raw") {
-      Write-Host "qemu-img info for source untouched cloud image: "
+      Write-Verbose "qemu-img info for source untouched cloud image: "
       & $qemuImgPath info "$fileExpanded"
       Write-Verbose "qemu-img convert to $($VMDiskType)"
       Write-Verbose "$qemuImgPath convert -f raw $fileExpanded -O $($VMDiskType) $($ImageCachePath)\$ImageFileName.$($VMDiskType)"
@@ -1022,7 +1022,7 @@ if (!(test-path "$($ImageCachePath)\$($ImageOS)-$($stamp).$($VMDiskType)")) {
       Remove-Item "$fileExpanded" -force
     }
     elseif ($fileExpanded -like "*.img") {
-      Write-Host "qemu-img info for source untouched cloud image: "
+      Write-Verbose "qemu-img info for source untouched cloud image: "
       & $qemuImgPath info "$fileExpanded"
       
       Write-Verbose "qemu-img convert to $($VMDiskType)"
@@ -1036,14 +1036,14 @@ if (!(test-path "$($ImageCachePath)\$($ImageOS)-$($stamp).$($VMDiskType)")) {
       exit 1
     }
     
-    Write-Host "Converting $($VMDiskType) fixed to $($VMDiskType) dynamic..."
+    Write-Verbose "Converting $($VMDiskType) fixed to $($VMDiskType) dynamic..."
     try {
       Convert-VHD -Path "$($ImageCachePath)\$ImageFileName.$($VMDiskType)" -DestinationPath "$($ImageCachePath)\$($ImageOS)-$($stamp).$($VMDiskType)" -VHDType Dynamic -DeleteSource
     }
     catch {
       Write-Warning $_
       Write-Warning "Failed to convert the disk using 'Convert-VHD', falling back to qemu-img... "
-      Write-Host "qemu-img info for source untouched cloud image: "
+      Write-Verbose "qemu-img info for source untouched cloud image: "
       & $qemuImgPath info "$($ImageCachePath)\$ImageFileName.$($VMDiskType)"
       Write-Verbose "qemu-img convert to vhd"
       & $qemuImgPath convert "$($ImageCachePath)\$ImageFileName.$($VMDiskType)" -O $($VMDiskType) -o subformat=dynamic "$($ImageCachePath)\$($ImageOS)-$($stamp).$($VMDiskType)"
@@ -1055,7 +1055,7 @@ if (!(test-path "$($ImageCachePath)\$($ImageOS)-$($stamp).$($VMDiskType)")) {
     }
 
     if ($ConvertImageToNoCloud) {
-      Write-Host 'Modify VHD and convert cloud-init to NoCloud ...'
+      Write-Verbose 'Modify VHD and convert cloud-init to NoCloud ...'
       $process = Start-Process `
         -FilePath cmd.exe `
         -Wait -PassThru -NoNewWindow `
@@ -1070,7 +1070,7 @@ if (!(test-path "$($ImageCachePath)\$($ImageOS)-$($stamp).$($VMDiskType)")) {
   catch {
     cleanupFile "$($ImageCachePath)\$($ImageOS)-$($stamp).$($VMDiskType)"
     $ErrorMessage = $_.Exception.Message
-    Write-Host "Error: $ErrorMessage"
+    Write-Error "$ErrorMessage"
     exit 1
   }
 }
@@ -1084,7 +1084,7 @@ cleanupFile $VMDiskPath
 fsutil sparse setflag "$($ImageCachePath)\$($ImageOS)-$($stamp).$($VMDiskType)" 0
 
 # Prepare VHD... (could also use copy)
-Write-Host "Prepare virtual disk..."
+Write-Verbose "Prepare virtual disk..."
 try {
   # block size bytes per recommendation https://learn.microsoft.com/en-us/windows-server/virtualization/hyper-v/best-practices-for-running-linux-on-hyper-v
   Convert-VHD -Path "$($ImageCachePath)\$($ImageOS)-$($stamp).$($VMDiskType)" -DestinationPath $VMDiskPath -VHDType Dynamic -BlockSizeBytes 1MB #-ErrorAction SilentlyContinue
@@ -1096,12 +1096,12 @@ catch {
 }
 
 if ($VHDSizeBytes -ne 0) {
-  Write-Host "Resize VHD to $([int]($VHDSizeBytes / 1024 / 1024 / 1024)) GB..."
+  Write-Verbose "Resize VHD to $([int]($VHDSizeBytes / 1024 / 1024 / 1024)) GB..."
   Resize-VHD -Path $VMDiskPath -SizeBytes $VHDSizeBytes
 }
 
 # Create new virtual machine and start it
-Write-Host "Create VM..."
+Write-Verbose "Create VM..."
 $vm = new-vm -Name $VMName -MemoryStartupBytes $VMMemoryStartupBytes `
   -Path "$VMMachinePath" `
   -VHDPath "$VMDiskPath" -Generation $VMGeneration `
@@ -1125,7 +1125,7 @@ if ($ExtraVHDsSizeBytes) {
   foreach ($extraVHD in $ExtraVHDsSizeBytes) {
     $extraVHDIndex++
     $extraVHDPath = "$($VMStoragePath)\$($VMName)-$($extraVHDIndex).$($VMDiskType)"
-    Write-Host "Create extra VHD $($extraVHDIndex)..."
+    Write-Verbose "Create extra VHD $($extraVHDIndex)..."
     New-VHD -Path $extraVHDPath -SizeBytes $extraVHD -Dynamic | out-null
     Add-VMHardDiskDrive -VMName $VMName -Path $extraVHDPath
   }
@@ -1170,13 +1170,13 @@ If ((($null -ne $VMVlanID) -and ([int]($VMVlanID) -ne 0)) -or
     (($null -ne $VMAllowedVlanIDList) -and ($VMAllowedVlanIDList -ne "")))) {
   If (($null -ne $VMNativeVlanID) -and ([int]($VMNativeVlanID) -ne 0) -and
       ($null -ne $VMAllowedVlanIDList) -and ($VMAllowedVlanIDList -ne "")) {
-    Write-Host "Setting native Vlan ID $VMNativeVlanID with trunk Vlan IDs '$VMAllowedVlanIDList'"
-    Write-Host "on virtual network adapter '$VMNetworkAdapterName'..."
+    Write-Verbose "Setting native Vlan ID $VMNativeVlanID with trunk Vlan IDs '$VMAllowedVlanIDList'"
+    Write-Verbose "on virtual network adapter '$VMNetworkAdapterName'..."
     Set-VMNetworkAdapterVlan -VMName $VMName -VMNetworkAdapterName "$VMNetworkAdapterName" `
       -Trunk  -NativeVlanID $VMNativeVlanID -AllowedVlanIDList $VMAllowedVlanIDList
   }
   else {
-    Write-Host "Setting Vlan ID $VMVlanID on virtual network adapter '$VMNetworkAdapterName'..."
+    Write-Verbose "Setting Vlan ID $VMVlanID on virtual network adapter '$VMNetworkAdapterName'..."
     Set-VMNetworkAdapterVlan -VMName $VMName -VMNetworkAdapterName "$VMNetworkAdapterName" `
       -Access -VlanId $VMVlanID
   }
@@ -1186,38 +1186,38 @@ else {
 }
 
 if ($VMVMQ) {
-  Write-Host "Enable Virtual Machine Queue (100)... "
+  Write-Verbose "Enable Virtual Machine Queue (100)... "
   Set-VMNetworkAdapter -VMName $VMName -VmqWeight 100
 }
 
 if ($VMDhcpGuard) {
-  Write-Host "Enable DHCP Guard... "
+  Write-Verbose "Enable DHCP Guard... "
   Set-VMNetworkAdapter -VMName $VMName -DhcpGuard On
 }
 
 if ($VMRouterGuard) {
-  Write-Host "Enable Router Guard... "
+  Write-Verbose "Enable Router Guard... "
   Set-VMNetworkAdapter -VMName $VMName -RouterGuard On
 }
 
 if ($VMAllowTeaming) {
-  Write-Host "Enable Allow Teaming... "
+  Write-Verbose "Enable Allow Teaming... "
   Set-VMNetworkAdapter -VMName $VMName -AllowTeaming On
 }
 
 if ($VMPassthru) {
-  Write-Host "Enable Passthru... "
+  Write-Verbose "Enable Passthru... "
   Set-VMNetworkAdapter -VMName $VMName -Passthru
 }
 
 #if (($null -ne $VMMaximumBandwidth) -and ($([int]($VMMaximumBandwidth)) -gt 0)) {
 #  if (($null -ne $VMMinimumBandwidthWeight) -and ($([int]($VMMinimumBandwidthWeight)) -gt 0)) {
-#    Write-Host "Set maximum bandwith to $([int]($VMMaximumBandwidth)) with minimum bandwidth weigth $([int]($VMMinimumBandwidthWeight))"
+#    Write-Verbose "Set maximum bandwith to $([int]($VMMaximumBandwidth)) with minimum bandwidth weigth $([int]($VMMinimumBandwidthWeight))"
 #    Set-VMNetworkAdapter -VMName $VMName -MaximumBandwidth $([int]($VMMaximumBandwidth)) `n
 #                                         -MinimumBandwidthWeight $([int]($VMMinimumBandwidthWeight))
 #  } elseif (($null -ne $VMMinimumBandwidthAbsolute) -and ($([int]($VMMinimumBandwidthAbsolute)) -gt 0) `
 #           -and ($([int]($VMMaximumBandwidth)) -gt ($([int]($VMMinimumBandwidthAbsolute))))) {
-#    Write-Host "Set maximum bandwith to $([int]($VMMaximumBandwidth)) with absolute minimum bandwidth $([int]($VMMinimumBandwidthAbsolute)) "
+#    Write-Verbose "Set maximum bandwith to $([int]($VMMaximumBandwidth)) with absolute minimum bandwidth $([int]($VMMinimumBandwidthAbsolute)) "
 #    Set-VMNetworkAdapter -VMName $VMName -MaximumBandwidth $([int]($VMMaximumBandwidth)) `n
 #                                         -MinimumBandwidthAbsolute $([int]($VMMinimumBandwidthAbsolute))
 #  } else {
@@ -1237,7 +1237,7 @@ else {
 }
 
 if ($VMExposeVirtualizationExtensions) {
-  Write-Host "Expose Virtualization Extensions to Guest ..."
+  Write-Verbose "Expose Virtualization Extensions to Guest ..."
   Set-VMProcessor -VMName $VMName -ExposeVirtualizationExtensions $true
 }
 
@@ -1278,18 +1278,18 @@ if ($null -ne (Get-Command Hyper-V\Set-VM).Parameters["AutomaticCheckpointsEnabl
 
 
 # https://social.technet.microsoft.com/Forums/en-US/d285d517-6430-49ba-b953-70ae8f3dce98/guest-asset-tag?forum=winserverhyperv
-Write-Host "Set SMBIOS serial number ..."
+Write-Verbose "Set SMBIOS serial number ..."
 $vmserial_smbios = $VmMachineId
 if ($ImageTypeAzure) {
   # set chassis asset tag to Azure constant as documented in https://github.com/canonical/cloud-init/blob/5e6ecc615318b48e2b14c2fd1f78571522848b4e/cloudinit/sources/helpers/azure.py#L1082
-  Write-Host "Set Azure chasis asset tag ..."
+  Write-Verbose "Set Azure chasis asset tag ..."
   # https://social.technet.microsoft.com/Forums/en-US/d285d517-6430-49ba-b953-70ae8f3dce98/guest-asset-tag?forum=winserverhyperv
   & .\Set-VMAdvancedSettings.ps1 -VM $VMName -ChassisAssetTag '7783-7084-3265-9085-8269-3286-77' -Force -Verbose:$verbose
   
   # also try to enable NoCloud via SMBIOS  https://cloudinit.readthedocs.io/en/22.4.2/topics/datasources/nocloud.html
   $vmserial_smbios = 'ds=nocloud'
 }
-Write-Host "SMBIOS SN: $vmserial_smbios"
+Write-Verbose "SMBIOS SN: $vmserial_smbios"
 & .\Set-VMAdvancedSettings.ps1 -VM $VMName -BIOSSerialNumber $vmserial_smbios -ChassisSerialNumber $vmserial_smbios -Force -Verbose:$verbose
 
 # redirect com port to pipe for VM serial output, src: https://superuser.com/a/1276263/145585
@@ -1305,12 +1305,12 @@ Remove-Item -Path $tempPath -Recurse -Force
 # Make checkpoint when debugging https://stackoverflow.com/a/16297557/1155121
 if ($PSBoundParameters.Debug -eq $true) {
   # make VM snapshot before 1st run
-  Write-Host "Creating checkpoint..."
+  Write-Verbose "Creating checkpoint..."
   Checkpoint-VM -Name $VMName -SnapshotName Initial
 }
 
 if ($AutoStart) {
-  Write-Host "Starting VM..."
+  Write-Verbose "Starting VM..."
   Start-VM $VMName
 
 
@@ -1336,3 +1336,5 @@ if ($ShowVmConnectWindow) {
   # Open up VMConnect
   Start-Process "vmconnect" "localhost", "$VMName" -WindowStyle Normal
 }
+
+Get-VM -VMname $VMName
