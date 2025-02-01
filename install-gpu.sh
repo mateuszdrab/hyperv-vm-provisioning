@@ -2,6 +2,7 @@
 set -ex
 
 echo "Moving files and setting permissions..."
+rm -rf /usr/lib/wsl
 mv ~/wsl /usr/lib/wsl
 chmod -R 555 /usr/lib/wsl/drivers/
 chmod -R 755 /usr/lib/wsl/lib/
