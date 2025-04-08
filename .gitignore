@@ -2,3 +2,5 @@ cache/*
 drivers/*
 local
 *.log
+VMCreationParamsDefault.json
+New-UbuntuVM.txt
