@@ -140,7 +140,7 @@ if ($waitForVmReady) {
             Start-Sleep -Seconds 30
         }
 
-        Write-Verbose "VM uptime is $uptime seconds, waited for $([uint32]((Get-Date) - $startWaitTimestamp).TotalSeconds) seconds total, continuing with GPU driver installation"
+        Write-Verbose "VM uptime is $uptime seconds, waited for $([uint32]((Get-Date) - $startWaitTimestamp).TotalSeconds) seconds total"
     } 
 
     if ($vmConnectDelay) {
