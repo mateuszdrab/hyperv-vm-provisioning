@@ -19,7 +19,7 @@ echo "Generating MOK key..."
 update-secureboot-policy --new-key
 
 echo "Compiling dxgkrnl-dkms..."
-curl -fsSL https://content.staralt.dev/dxgkrnl-dkms/6.11/install.sh | DEBIAN_FRONTEND=noninteractive bash -esx
+curl -fsSL https://content.staralt.dev/dxgkrnl-dkms/main/install.sh | DEBIAN_FRONTEND=noninteractive bash -esx
 
 echo "Enrolling MOK key with password 'ubuntugpu'..."
 printf "ubuntugpu\nubuntugpu\n" | update-secureboot-policy --enroll-key
